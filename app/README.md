@@ -39,7 +39,7 @@ Submit PRs to the main branch.
 - **Dependencies**: Install via `npm install` in the `app/` directory—requires React Native setup (`npx react-native init` generates `android/` and `ios/`).
 - **Placeholders**: `web3.js` contains placeholder logic (e.g., `getMotions`, `getNFTs`)—replace with actual contract calls using ABIs and addresses post-deployment.
 - **Navigation**: Uses `@react-navigation` for screen transitions—expand with more screens as needed.
-- **Execution**: Run `npx react-native run-android` or `run-ios` after setup—I can assist with troubleshooting.
+- **Execution**: Run `npx react-native run-android` or `run-ios` 
 
 ---
 
