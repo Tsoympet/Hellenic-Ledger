@@ -33,7 +33,7 @@ describe("Drachma", function () {
     await ethers.provider.send("evm_mine", []);
     const reward = await drachma.calculateStakingReward(user1.address);
     expect(reward).to.be.above(0);
-  });
+  }); 
 
   it("should allow unstaking with rewards", async function () {
     await citizenID.verifyUser(user1.address);
