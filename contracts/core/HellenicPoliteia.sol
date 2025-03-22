@@ -24,21 +24,10 @@ interface ITalanton {
     function updateRewardRate(uint256 newStakeRate, uint256 newMiningRate) external;
     function updateDecayFactor(uint256 newFactor) external;
     function titanicMints(address user) external view returns (uint256);
+    function stakedBalance(address user) external view returns (uint256); // Added
+    function calculateStakingBonus(address user) external view returns (uint256); // Added
 }
 
-/**
- * @title HellenicPoliteia
- * @dev Governance contract managing the Hellenic Sao Ledger ecosystem across BEP-20, sidechain, and full chain phases.
- * Eponymous Heroes (4) initiate the BEP-20 project and transfer ownership, retaining:
- * - Permanent positions, revenue (HERO_TALANTON, etc.), voting rights (no duties), transferable/inheritable spots
- * Elected roles with Fame system and revenue from treasury:
- * - Archon (1): Oversees all, vetoes motions, initiates emergencies
- * - Strategoi (10): Executive oversight (chain dev, legal defense)
- * - Prytaneis (50): Marketing, partnerships, sidechain dev
- * - Grammateis (25): Regulations, community, full chain dev
- * - Demos (500): Voting rights, no duties/revenue
- * Features: Fame tracking, removal/ban for misconduct, exploit protection
- */
 contract HellenicPoliteia is Initializable, ReentrancyGuardUpgradeable, OwnableUpgradeable, PausableUpgradeable {
     address public citizenIDContract;
     address public talantonContract;
@@ -732,7 +721,7 @@ contract HellenicPoliteia is Initializable, ReentrancyGuardUpgradeable, OwnableU
 
     function withdrawCharity(address recipient, uint256 talantonAmt, uint256 drachmaAmt, uint256 obolosAmt, bytes[] calldata signatures) external onlyStrategoi nonReentrant whenNotPaused {
         require(signatures.length > 0, "Signatures required");
-        require(verifySignature(keccak256(abi.encodePacked("CharityWithdraw", recipient, talantonAmt, drachmaAmt, obolosAmt)), signatures, 7), "Invalid signatures");
+        require(verifySignatures(keccak256(abi.encodePacked("CharityWithdraw", recipient, talantonAmt, drachmaAmt, obolosAmt)), signatures, 7), "Invalid signatures");
         require(talantonAmt <= charityVaultTalanton && drachmaAmt <= charityVaultDrachma && obolosAmt <= charityVaultObolos, "Insufficient funds");
         require(recipient != address(0), "Invalid recipient");
         charityVaultTalanton -= talantonAmt;
