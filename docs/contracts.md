@@ -1,10 +1,3 @@
-
----
-
-#### **docs/contracts.md**
-Contract details.
-
-```markdown
 # Contracts Documentation
 
 Details of the smart contracts in the Hellenic Sao Ledger ecosystem.
@@ -21,12 +14,16 @@ Details of the smart contracts in the Hellenic Sao Ledger ecosystem.
      - `distributeRevenue(startIndex, batchSize)`: Distributes treasury funds.
 
 2. **Talanton.sol**
-   - **Purpose**: PoW/PoS hybrid token (21M cap).
-   - **Features**: Mining, staking (5% APR).
+   - **Purpose**: Hybrid PoW/PoS token with a 21M cap.
+   - **Features**:
+     - **Staking (PoS)**: 5% APR, minimum 32,000 TAL required to stake and mine.
+     - **Mining (PoW/PoS)**: Requires 32,000 TAL staked, miners compute a nonce off-chain using address, block hash, and staked balance, verified on-chain. Rewards 1 TAL + staking bonus.
    - **Key Functions**:
-     - `stake(amount)`: Stakes tokens.
+     - `stake(amount)`: Stakes tokens (min 32,000 TAL).
      - `unstake(amount)`: Unstakes with rewards.
-     - `mine(hash)`: Mines new tokens.
+     - `mine(nonce)`: Mines 1 TAL + staking bonus if staked and solution valid.
+     - `calculateStakingReward(user)`: Calculates staking reward (5% APR).
+     - `calculateStakingBonus(user)`: Calculates mining bonus based on stake duration.
 
 3. **Drachma.sol**
    - **Purpose**: PoS token for payments.
@@ -56,8 +53,16 @@ Details of the smart contracts in the Hellenic Sao Ledger ecosystem.
 2. Run:
    ```bash
    npx hardhat run scripts/deploy.js --network bscTestnet
-See scripts/ for funding and ownership transfer scripts.
-Testing
+
+   See scripts/ for funding and ownership transfer scripts.
+
+   Testing
 Run tests:
 npx hardhat test
+
 See test/ for detailed test cases.
+
+
+---
+
+
