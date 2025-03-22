@@ -66,6 +66,12 @@ export async function payObolos(signer, recipient, amount) {
   await tx.wait();
 }
 
+export async function mineTalanton(signer, nonce) {
+  const talanton = new ethers.Contract(talantonAddress, talantonABI, signer);
+  const tx = await talanton.mine(nonce);
+  await tx.wait();
+}
+
 export async function getNFTs(signer) {
   const titanicNFT = new ethers.Contract(titanicNFTAddress, titanicNFTABI, signer);
   // Placeholder: Fetch NFTs (implement with actual logic)
