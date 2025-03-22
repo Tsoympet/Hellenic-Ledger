@@ -4,33 +4,39 @@ async function main() {
   const [deployer] = await ethers.getSigners();
   console.log("Testing interactions with:", deployer.address);
 
-  const politeiaAddress = "0x..."; // Replace with deployed HellenicPoliteia address
-  const talantonAddress = "0x..."; // Replace with deployed Talanton address
-  const drachmaAddress = "0x..."; // Replace with deployed Drachma address
-  const obolosAddress = "0x..."; // Replace with deployed Obolos address
-  const citizenIDAddress = "0x..."; // Replace with deployed CitizenID address
+  const politeiaAddress = "0x..."; // Replace with deployed address
+  const talantonAddress = "0x..."; // Replace with deployed address
+  const citizenIDAddress = "0x..."; // Replace with deployed address
 
   const HellenicPoliteia = await ethers.getContractFactory("HellenicPoliteia");
   const Talanton = await ethers.getContractFactory("Talanton");
-  const Drachma = await ethers.getContractFactory("Drachma");
-  const Obolos = await ethers.getContractFactory("Obolos");
   const CitizenID = await ethers.getContractFactory("CitizenID");
 
   const politeia = HellenicPoliteia.attach(politeiaAddress);
   const talanton = Talanton.attach(talantonAddress);
-  const drachma = Drachma.attach(drachmaAddress);
-  const obolos = Obolos.attach(obolosAddress);
   const citizenID = CitizenID.attach(citizenIDAddress);
 
   // Verify deployer
   await citizenID.verifyUser(deployer.address);
   console.log("Verified deployer:", await citizenID.isVerified(deployer.address));
 
-  // Stake Talanton
+  // Stake Talanton before mining
   const stakeAmount = ethers.parseEther("32000");
   await talanton.approve(talantonAddress, stakeAmount);
   await talanton.stake(stakeAmount);
   console.log("Staked Talanton:", ethers.formatEther(await talanton.stakedBalance(deployer.address)));
+
+  // Mine with nonce
+  const blockHash = await ethers.provider.getBlock("latest").then(b => b.parentHash);
+  const target = ethers.MaxUint256.div(1000);
+  let nonce = 0;
+  let solution;
+  do {
+    solution = ethers.keccak256(ethers.solidityPacked(["address", "bytes32", "uint256", "uint256"], [deployer.address, blockHash, nonce, stakeAmount]));
+    nonce++;
+  } while (ethers.toBigInt(solution) > target);
+  await talanton.mine(nonce - 1);
+  console.log("Mined with nonce:", nonce - 1);
 
   // Vote on an election
   await politeia.startElection("Strategos", deployer.address);
@@ -42,7 +48,6 @@ async function main() {
   await politeia.voteForMotion(0, true);
   console.log("Proposed and voted on motion 0");
 
-  // Test interactions complete
   console.log("Test interactions completed successfully.");
 }
 
