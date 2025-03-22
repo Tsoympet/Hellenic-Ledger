@@ -30,16 +30,17 @@ contract Talanton is ERC20Upgradeable, ReentrancyGuardUpgradeable, OwnableUpgrad
     uint256 public constant STAKE_AMOUNT = 32_000 * 10**18;
     uint256 public constant STAKING_REWARD_RATE = 5; // 5% APR
     uint256 public constant MINING_DIFFICULTY = 1000;
+    uint256 public constant TARGET = type(uint256).max / MINING_DIFFICULTY; // Cached target
     uint256 public decayFactor;
 
     mapping(address => uint256) public stakedBalance;
     mapping(address => uint256) public stakeTimestamp;
-    mapping(address => uint256) public miningNonce;
+    mapping(address => uint256) public lastMinedBlock;
     mapping(address => uint256) public titanicMints;
 
     event Staked(address indexed user, uint256 amount);
     event Unstaked(address indexed user, uint256 amount);
-    event Mined(address indexed miner, uint256 amount);
+    event Mined(address indexed miner, uint256 amount, uint256 nonce);
 
     function initialize(
         address _citizenIDContract,
@@ -59,7 +60,7 @@ contract Talanton is ERC20Upgradeable, ReentrancyGuardUpgradeable, OwnableUpgrad
         layerZeroEndpoint = _layerZeroEndpoint;
         titanicNFTContract = _titanicNFTContract;
         disputeResolverContract = _disputeResolverContract;
-        decayFactor = 1e18; // Initial decay factor
+        decayFactor = 1e18;
     }
 
     modifier onlyDAO() {
@@ -86,18 +87,29 @@ contract Talanton is ERC20Upgradeable, ReentrancyGuardUpgradeable, OwnableUpgrad
         emit Unstaked(msg.sender, amount);
     }
 
-    function mine(bytes32 hash) external nonReentrant whenNotPaused {
+    function mine(uint256 nonce) external nonReentrant whenNotPaused {
         require(ICitizenID(citizenIDContract).isVerified(msg.sender), "Not verified");
-        uint256 nonce = miningNonce[msg.sender]++;
-        bytes32 solution = keccak256(abi.encodePacked(msg.sender, nonce, block.timestamp));
-        require(uint256(solution) % MINING_DIFFICULTY == 0, "Invalid solution");
-        uint256 mintAmount = 1 * 10**18; // 1 Talanton per mine
+        require(stakedBalance[msg.sender] >= STAKE_AMOUNT, "Must stake at least 32,000 TAL to mine");
+
+        bytes32 blockHash = blockhash(block.number - 1);
+        require(blockHash != bytes32(0), "Block hash unavailable, try next block");
+        bytes32 solution = keccak256(abi.encodePacked(msg.sender, blockHash, nonce, stakedBalance[msg.sender]));
+        require(uint256(solution) <= TARGET, "Invalid solution");
+
+        require(lastMinedBlock[msg.sender] < block.number, "Already mined this block");
+        lastMinedBlock[msg.sender] = block.number;
+
+        uint256 baseMintAmount = 1 * 10**18;
+        uint256 stakingBonus = calculateStakingBonus(msg.sender);
+        uint256 mintAmount = baseMintAmount + stakingBonus;
         require(totalSupply() + mintAmount <= TOTAL_SUPPLY_CAP, "Exceeds supply cap");
         _mint(msg.sender, mintAmount);
+
         if (ITitanicNFT(titanicNFTContract).balanceOf(msg.sender) > 0) {
             titanicMints[msg.sender]++;
         }
-        emit Mined(msg.sender, mintAmount);
+
+        emit Mined(msg.sender, mintAmount, nonce);
     }
 
     function calculateStakingReward(address user) public view returns (uint256) {
@@ -106,11 +118,17 @@ contract Talanton is ERC20Upgradeable, ReentrancyGuardUpgradeable, OwnableUpgrad
         return reward / decayFactor;
     }
 
+    function calculateStakingBonus(address user) public view returns (uint256) {
+        uint256 timeStaked = block.timestamp - stakeTimestamp[user];
+        return (stakedBalance[user] * timeStaked * 1e17) / (STAKE_AMOUNT * 365 days);
+    }
+
     function updateRewardRate(uint256 newStakeRate, uint256 newMiningRate) external onlyDAO {
         // Placeholder for reward rate update logic
     }
 
     function updateDecayFactor(uint256 newFactor) external onlyDAO {
+        require(newFactor > 0, "Decay factor cannot be zero");
         decayFactor = newFactor;
     }
 
