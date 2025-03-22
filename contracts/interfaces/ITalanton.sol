@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 interface ITalanton {
     function stake(uint256 amount) external;
     function unstake(uint256 amount) external;
-    function mine(bytes32 hash) external;
+    function mine(uint256 nonce) external;
     function updateRewardRate(uint256 newStakeRate, uint256 newMiningRate) external;
     function updateDecayFactor(uint256 newFactor) external;
     function pause() external;
@@ -15,4 +15,5 @@ interface ITalanton {
     function titanicMints(address user) external view returns (uint256);
     function stakedBalance(address user) external view returns (uint256);
     function calculateStakingReward(address user) external view returns (uint256);
+    function calculateStakingBonus(address user) external view returns (uint256);
 }
