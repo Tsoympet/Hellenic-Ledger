@@ -1,6 +1,6 @@
 # Tools Directory
 
-This directory contains off-chain utilities for interacting with the Hellenic Sao Ledger smart contracts on Binance Smart Chain (BSC) Testnet.
+This directory contains off-chain utilities for interacting with the Hellenic  Ledger smart contracts on Binance Smart Chain (BSC) Testnet.
 
 ## Contents
 - **`mineTalanton.js`**: A Node.js script to perform off-chain mining for the `Talanton.sol` contract, computing a valid nonce and submitting it on-chain to mint Talanton tokens.
