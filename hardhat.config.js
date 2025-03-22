@@ -10,3 +10,17 @@ module.exports = {
     }
   }
 };
+{
+  "name": "hellenic-sao-ledger",
+  "version": "1.0.0",
+  "description": "Hellenic Sao Ledger project",
+  "scripts": {
+    "test": "hardhat test",
+    "deploy": "hardhat run scripts/deploy.js --network bscTestnet"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@openzeppelin/hardhat-upgrades": "^3.0.2",
+    "hardhat": "^2.22.1"
+  }
+}
