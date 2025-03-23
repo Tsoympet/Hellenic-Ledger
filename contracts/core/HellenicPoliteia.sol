@@ -24,8 +24,8 @@ interface ITalanton {
     function updateRewardRate(uint256 newStakeRate, uint256 newMiningRate) external;
     function updateDecayFactor(uint256 newFactor) external;
     function titanicMints(address user) external view returns (uint256);
-    function stakedBalance(address user) external view returns (uint256); // Added
-    function calculateStakingBonus(address user) external view returns (uint256); // Added
+    function stakedBalance(address user) external view returns (uint256);
+    function calculateStakingBonus(address user) external view returns (uint256);
 }
 
 contract HellenicPoliteia is Initializable, ReentrancyGuardUpgradeable, OwnableUpgradeable, PausableUpgradeable {
@@ -86,6 +86,8 @@ contract HellenicPoliteia is Initializable, ReentrancyGuardUpgradeable, OwnableU
     uint256 public constant GRAMMATEUS_SIZE = 25;
     uint256 public constant ARCHON_SIZE = 1;
     uint256 public constant FAME_THRESHOLD = 50;
+    uint256 public constant MAX_VETOES = 3; // Veto limit per Archon term
+    uint256 public constant MAX_VOTES_PER_ADDRESS = 1e22; // ~10M votes cap
 
     uint256 public lastPayout;
     bool public emergencyPauseActive;
@@ -93,6 +95,7 @@ contract HellenicPoliteia is Initializable, ReentrancyGuardUpgradeable, OwnableU
     uint256 public cachedVotingPower;
     uint256 public lastVotingPowerUpdate;
     bool public foundersHandoverComplete;
+    uint256 public vetoCount; // Track Archon vetoes
 
     mapping(address => uint256) public fameScore;
     mapping(address => bool) public bannedFromElection;
@@ -154,6 +157,7 @@ contract HellenicPoliteia is Initializable, ReentrancyGuardUpgradeable, OwnableU
     event HeroSpotInherited(address indexed from, address indexed to);
     event FameUpdated(address indexed member, uint256 newFame);
     event MemberRemovedAndBanned(address indexed member, string role, string reason);
+    event MemberSlashed(address indexed member, uint256 amount, string reason);
 
     function initialize(
         address _citizenIDContract,
@@ -327,8 +331,9 @@ contract HellenicPoliteia is Initializable, ReentrancyGuardUpgradeable, OwnableU
         uint256 talantonVotes = IERC20(talantonContract).balanceOf(msg.sender) / 10**18 * (ITalanton(talantonContract).titanicMints(msg.sender) > 0 ? 5000 : 1000);
         uint256 obolosVotes = IERC20(obolosContract).balanceOf(msg.sender) / (1000 * 10**18);
         uint256 boost = IPerksManager(perksManagerContract).getVotingBoost(msg.sender);
-        uint256 totalVotes = (talantonVotes + obolosVotes) * (boost > 0 ? boost : 1);
-        vote.votes += totalVotes;
+        uint256 rawVotes = (talantonVotes + obolosVotes) * (boost > 0 ? boost : 1);
+        uint256 cappedVotes = rawVotes > MAX_VOTES_PER_ADDRESS ? MAX_VOTES_PER_ADDRESS : rawVotes; // Cap votes
+        vote.votes += cappedVotes;
         hasVoted[msg.sender][electionId] = true;
         emit RoleElected(role, vote.candidate, vote.votes);
     }
@@ -363,6 +368,7 @@ contract HellenicPoliteia is Initializable, ReentrancyGuardUpgradeable, OwnableU
                 vote.active = false;
                 archon = vote.candidate;
                 fameScore[vote.candidate] = 100;
+                vetoCount = 0; // Reset veto count for new Archon
                 emit RoleElected(role, vote.candidate, vote.votes);
                 emit FameUpdated(vote.candidate, 100);
             }
@@ -412,6 +418,7 @@ contract HellenicPoliteia is Initializable, ReentrancyGuardUpgradeable, OwnableU
         if (keccak256(abi.encodePacked(role)) == keccak256(abi.encodePacked("Archon"))) {
             require(member == archon, "Invalid Archon");
             archon = address(0);
+            vetoCount = 0; // Reset veto count
         } else if (keccak256(abi.encodePacked(role)) == keccak256(abi.encodePacked("Strategos"))) {
             for (uint i = 0; i < strategoi.length; i++) {
                 if (strategoi[i] == member) {
@@ -455,6 +462,17 @@ contract HellenicPoliteia is Initializable, ReentrancyGuardUpgradeable, OwnableU
         emit FameUpdated(member, uint256(newFame));
     }
 
+    function slash(address member, uint256 amount, string calldata reason, bytes[] calldata signatures) external onlyArchon whenNotPaused {
+        require(bytes(reason).length > 0, "Reason required");
+        require(signatures.length >= 3, "At least 3 signatures required");
+        require(verifySignatures(keccak256(abi.encodePacked("Slash", member, amount, reason, block.timestamp)), signatures, 3), "Invalid signatures");
+        uint256 staked = ITalanton(talantonContract).stakedBalance(member);
+        require(staked >= amount, "Insufficient stake to slash");
+        // Placeholder: Implement slashing logic (e.g., burn or transfer to treasury)
+        // For now, assume burn
+        emit MemberSlashed(member, amount, reason);
+    }
+
     function proposeSilverMotion(string calldata description, uint256 newStakeRate, uint256 newMiningRate, bytes calldata actionData) external onlyVerified whenNotPaused {
         require(IERC20(drachmaContract).balanceOf(msg.sender) >= 1000000 * 10**18, "Stake at least 1M drachmae");
         require(bytes(description).length > 0, "Description cannot be empty");
@@ -471,23 +489,27 @@ contract HellenicPoliteia is Initializable, ReentrancyGuardUpgradeable, OwnableU
         uint256 talantonVotes = IERC20(talantonContract).balanceOf(msg.sender) / 10**18 * (ITalanton(talantonContract).titanicMints(msg.sender) > 0 ? 5000 : 1000);
         uint256 obolosVotes = IERC20(obolosContract).balanceOf(msg.sender) / (1000 * 10**18);
         uint256 boost = IPerksManager(perksManagerContract).getVotingBoost(msg.sender);
-        uint256 totalVotes = (talantonVotes + obolosVotes) * (boost > 0 ? boost : 1);
-
+        uint256 rawVotes = (talantonVotes + obolosVotes) * (boost > 0 ? boost : 1);
+        uint256 cappedVotes = rawVotes > MAX_VOTES_PER_ADDRESS ? MAX_VOTES_PER_ADDRESS : rawVotes; // Cap votes
         if (inFavor) {
-            motion.votesFor += totalVotes;
+            motion.votesFor += cappedVotes;
         } else {
-            motion.votesAgainst += totalVotes;
+            motion.votesAgainst += cappedVotes;
         }
         hasVotedMotion[msg.sender][motionId] = true;
         emit MotionVoted(motionId, msg.sender, inFavor);
     }
 
-    function vetoSilverMotion(uint256 motionId) external onlyArchon whenNotPaused {
+    function vetoSilverMotion(uint256 motionId, bytes[] calldata signatures) external onlyArchon whenNotPaused {
+        require(vetoCount < MAX_VETOES, "Veto limit reached");
+        require(signatures.length >= 2, "At least 2 Strategoi signatures required");
+        require(verifySignatures(keccak256(abi.encodePacked("Veto", motionId, block.timestamp)), signatures, 2), "Invalid signatures");
         SilverMotion storage motion = silverMotions[motionId];
         require(motion.active && block.timestamp <= motion.endTime, "Voting ended or motion inactive");
         require(!motion.vetoedByArchon, "Already vetoed");
         motion.vetoedByArchon = true;
         motion.active = false;
+        vetoCount++;
         emit MotionVetoed(motionId, msg.sender);
     }
 
@@ -538,7 +560,7 @@ contract HellenicPoliteia is Initializable, ReentrancyGuardUpgradeable, OwnableU
     }
 
     function triggerEmergencyPause(bytes[] calldata signatures) external onlyArchon whenNotPaused {
-        require(signatures.length > 0, "Signatures required");
+        require(signatures.length >= 3, "At least 3 signatures required");
         require(verifySignatures(keccak256(abi.encodePacked("EmergencyPause", block.timestamp)), signatures, 3), "Requires Archon + 2 Strategoi");
         require(!emergencyPauseActive, "Already paused");
         emergencyPauseActive = true;
@@ -567,7 +589,7 @@ contract HellenicPoliteia is Initializable, ReentrancyGuardUpgradeable, OwnableU
     }
 
     function executeEmergencyCondition(uint256 conditionId, address recipient, bytes[] calldata signatures) external onlyArchon nonReentrant {
-        require(signatures.length > 0, "Signatures required");
+        require(signatures.length >= 3, "At least 3 signatures required");
         EmergencyCondition storage condition = emergencyConditions[conditionId];
         require(!condition.executed, "Already executed");
         require(verifySignatures(keccak256(abi.encodePacked("ExecuteEmergency", conditionId, recipient)), signatures, 3), "Requires Archon + 2 Strategoi");
@@ -584,6 +606,33 @@ contract HellenicPoliteia is Initializable, ReentrancyGuardUpgradeable, OwnableU
         emit VaultWithdrawn("Emergency", recipient, condition.talantonAmt, condition.drachmaAmt, condition.obolosAmt);
     }
 
+    function distributeRevenueBatch(address[] calldata recipients, uint256[] calldata talantonAmounts, uint256[] calldata drachmaAmounts, uint256[] calldata obolosAmounts) external onlyOwner nonReentrant whenNotPaused {
+        require(recipients.length == talantonAmounts.length && talantonAmounts.length == drachmaAmounts.length && drachmaAmounts.length == obolosAmounts.length, "Mismatched arrays");
+        require(block.timestamp >= lastPayout + 30 days, "Too early");
+        lastPayout = block.timestamp;
+
+        uint256 talantonBalance = IERC20(talantonContract).balanceOf(address(this));
+        uint256 drachmaBalance = IERC20(drachmaContract).balanceOf(address(this));
+        uint256 obolosBalance = IERC20(obolosContract).balanceOf(address(this));
+
+        uint256 totalTalanton = 0;
+        uint256 totalDrachma = 0;
+        uint256 totalObolos = 0;
+        for (uint i = 0; i < recipients.length; i++) {
+            totalTalanton += talantonAmounts[i];
+            totalDrachma += drachmaAmounts[i];
+            totalObolos += obolosAmounts[i];
+        }
+        require(totalTalanton <= talantonBalance && totalDrachma <= drachmaBalance && totalObolos <= obolosBalance, "Insufficient funds");
+
+        for (uint i = 0; i < recipients.length; i++) {
+            if (talantonAmounts[i] > 0) IERC20(talantonContract).transfer(recipients[i], talantonAmounts[i]);
+            if (drachmaAmounts[i] > 0) IERC20(drachmaContract).transfer(recipients[i], drachmaAmounts[i]);
+            if (obolosAmounts[i] > 0) IERC20(obolosContract).transfer(recipients[i], obolosAmounts[i]);
+        }
+        emit RevenueDistributed(block.timestamp);
+    }
+
     function distributeRevenue(uint256 startIndex, uint256 batchSize) external nonReentrant whenNotPaused {
         require(block.timestamp >= lastPayout + 30 days, "Too early");
         require(batchSize > 0, "Batch size must be positive");
@@ -592,6 +641,10 @@ contract HellenicPoliteia is Initializable, ReentrancyGuardUpgradeable, OwnableU
         uint256 talantonBalance = IERC20(talantonContract).balanceOf(address(this));
         uint256 drachmaBalance = IERC20(drachmaContract).balanceOf(address(this));
         uint256 obolosBalance = IERC20(obolosContract).balanceOf(address(this));
+
+        uint256 talantonShare = talantonBalance * 80 / 100; // 80% of available
+        uint256 drachmaShare = drachmaBalance * 80 / 100;
+        uint256 obolosShare = obolosBalance * 80 / 100;
 
         uint256 devTalanton = talantonBalance * 5 / 100;
         uint256 devDrachma = drachmaBalance * 5 / 100;
@@ -614,66 +667,71 @@ contract HellenicPoliteia is Initializable, ReentrancyGuardUpgradeable, OwnableU
         drachmaBalance -= (devDrachma + legalDrachma);
         obolosBalance -= (devObolos + legalObolos);
 
-        for (uint i = 0; i < 4 && talantonBalance >= HERO_TALANTON; i++) {
-            IERC20(talantonContract).transfer(eponymousHeroes[i], HERO_TALANTON);
-            IERC20(drachmaContract).transfer(eponymousHeroes[i], HERO_DRACHMA);
-            IERC20(obolosContract).transfer(eponymousHeroes[i], HERO_OBOLOS);
-            talantonBalance -= HERO_TALANTON;
-            drachmaBalance -= HERO_DRACHMA;
-            obolosBalance -= HERO_OBOLOS;
+        uint256 totalRoles = 4 + 1 + strategoi.length + prytaneis.length + grammateis.length + batchSize;
+        uint256 perRoleTalanton = talantonShare / totalRoles;
+        uint256 perRoleDrachma = drachmaShare / totalRoles;
+        uint256 perRoleObolos = obolosShare / totalRoles;
+
+        for (uint i = 0; i < 4 && talantonBalance >= perRoleTalanton; i++) {
+            IERC20(talantonContract).transfer(eponymousHeroes[i], perRoleTalanton);
+            IERC20(drachmaContract).transfer(eponymousHeroes[i], perRoleDrachma);
+            IERC20(obolosContract).transfer(eponymousHeroes[i], perRoleObolos);
+            talantonBalance -= perRoleTalanton;
+            drachmaBalance -= perRoleDrachma;
+            obolosBalance -= perRoleObolos;
         }
 
-        if (archon != address(0) && talantonBalance >= ARCHON_TALANTON) {
-            IERC20(talantonContract).transfer(archon, ARCHON_TALANTON);
-            IERC20(drachmaContract).transfer(archon, ARCHON_DRACHMA);
-            IERC20(obolosContract).transfer(archon, ARCHON_OBOLOS);
-            talantonBalance -= ARCHON_TALANTON;
-            drachmaBalance -= ARCHON_DRACHMA;
-            obolosBalance -= ARCHON_OBOLOS;
+        if (archon != address(0) && talantonBalance >= perRoleTalanton) {
+            IERC20(talantonContract).transfer(archon, perRoleTalanton);
+            IERC20(drachmaContract).transfer(archon, perRoleDrachma);
+            IERC20(obolosContract).transfer(archon, perRoleObolos);
+            talantonBalance -= perRoleTalanton;
+            drachmaBalance -= perRoleDrachma;
+            obolosBalance -= perRoleObolos;
         }
 
-        for (uint i = startIndex; i < startIndex + batchSize && i < demos.length && talantonBalance >= DEMOS_TALANTON; i++) {
-            IERC20(talantonContract).transfer(demos[i], DEMOS_TALANTON);
-            IERC20(drachmaContract).transfer(demos[i], DEMOS_DRACHMA);
-            IERC20(obolosContract).transfer(demos[i], DEMOS_OBOLOS);
-            talantonBalance -= DEMOS_TALANTON;
-            drachmaBalance -= DEMOS_DRACHMA;
-            obolosBalance -= DEMOS_OBOLOS;
+        for (uint i = startIndex; i < startIndex + batchSize && i < demos.length && talantonBalance >= perRoleTalanton; i++) {
+            IERC20(talantonContract).transfer(demos[i], perRoleTalanton);
+            IERC20(drachmaContract).transfer(demos[i], perRoleDrachma);
+            IERC20(obolosContract).transfer(demos[i], perRoleObolos);
+            talantonBalance -= perRoleTalanton;
+            drachmaBalance -= perRoleDrachma;
+            obolosBalance -= perRoleObolos;
         }
 
-        for (uint i = 0; i < strategoi.length && talantonBalance >= STRATEGOS_TALANTON; i++) {
-            IERC20(talantonContract).transfer(strategoi[i], STRATEGOS_TALANTON);
-            IERC20(drachmaContract).transfer(strategoi[i], STRATEGOS_DRACHMA);
-            IERC20(obolosContract).transfer(strategoi[i], STRATEGOS_OBOLOS);
-            talantonBalance -= STRATEGOS_TALANTON;
-            drachmaBalance -= STRATEGOS_DRACHMA;
-            obolosBalance -= STRATEGOS_OBOLOS;
+        for (uint i = 0; i < strategoi.length && talantonBalance >= perRoleTalanton; i++) {
+            IERC20(talantonContract).transfer(strategoi[i], perRoleTalanton);
+            IERC20(drachmaContract).transfer(strategoi[i], perRoleDrachma);
+            IERC20(obolosContract).transfer(strategoi[i], perRoleObolos);
+            talantonBalance -= perRoleTalanton;
+            drachmaBalance -= perRoleDrachma;
+            obolosBalance -= perRoleObolos;
         }
 
-        for (uint i = 0; i < prytaneis.length && talantonBalance >= PRYTANIS_TALANTON; i++) {
-            IERC20(talantonContract).transfer(prytaneis[i], PRYTANIS_TALANTON);
-            IERC20(drachmaContract).transfer(prytaneis[i], PRYTANIS_DRACHMA);
-            IERC20(obolosContract).transfer(prytaneis[i], PRYTANIS_OBOLOS);
-            talantonBalance -= PRYTANIS_TALANTON;
-            drachmaBalance -= PRYTANIS_DRACHMA;
-            obolosBalance -= PRYTANIS_OBOLOS;
+        for (uint i = 0; i < prytaneis.length && talantonBalance >= perRoleTalanton; i++) {
+            IERC20(talantonContract).transfer(prytaneis[i], perRoleTalanton);
+            IERC20(drachmaContract).transfer(prytaneis[i], perRoleDrachma);
+            IERC20(obolosContract).transfer(prytaneis[i], perRoleObolos);
+            talantonBalance -= perRoleTalanton;
+            drachmaBalance -= perRoleDrachma;
+            obolosBalance -= perRoleObolos;
         }
 
-        for (uint i = 0; i < grammateis.length && talantonBalance >= GRAMMATEUS_TALANTON; i++) {
-            IERC20(talantonContract).transfer(grammateis[i], GRAMMATEUS_TALANTON);
-            IERC20(drachmaContract).transfer(grammateis[i], GRAMMATEUS_DRACHMA);
-            IERC20(obolosContract).transfer(grammateis[i], GRAMMATEUS_OBOLOS);
-            talantonBalance -= GRAMMATEUS_TALANTON;
-            drachmaBalance -= GRAMMATEUS_DRACHMA;
-            obolosBalance -= GRAMMATEUS_OBOLOS;
+        for (uint i = 0; i < grammateis.length && talantonBalance >= perRoleTalanton; i++) {
+            IERC20(talantonContract).transfer(grammateis[i], perRoleTalanton);
+            IERC20(drachmaContract).transfer(grammateis[i], perRoleDrachma);
+            IERC20(obolosContract).transfer(grammateis[i], perRoleObolos);
+            talantonBalance -= perRoleTalanton;
+            drachmaBalance -= perRoleDrachma;
+            obolosBalance -= perRoleObolos;
         }
 
         emit RevenueDistributed(block.timestamp);
     }
 
     function withdrawLegalDefense(address recipient, uint256 talantonAmt, uint256 drachmaAmt, uint256 obolosAmt, bytes[] calldata signatures) public onlyStrategoi nonReentrant whenNotPaused {
-        require(signatures.length > 0 || msg.sender == address(this), "Signatures required unless internal call");
-        if (signatures.length > 0) {
+        require(signatures.length >= 7 || msg.sender == address(this), "At least 7 signatures required unless internal call");
+        if (signatures.length >= 7) {
             require(verifySignatures(keccak256(abi.encodePacked("LegalDefenseWithdraw", recipient, talantonAmt, drachmaAmt, obolosAmt)), signatures, 7), "Invalid signatures");
         }
         require(talantonAmt <= legalDefenseVaultTalanton && drachmaAmt <= legalDefenseVaultDrachma && obolosAmt <= legalDefenseVaultObolos, "Insufficient funds");
@@ -688,8 +746,8 @@ contract HellenicPoliteia is Initializable, ReentrancyGuardUpgradeable, OwnableU
     }
 
     function withdrawSidechainDev(address recipient, uint256 talantonAmt, uint256 drachmaAmt, uint256 obolosAmt, bytes[] calldata signatures) public onlyStrategoi nonReentrant whenNotPaused {
-        require(signatures.length > 0 || msg.sender == address(this), "Signatures required unless internal call");
-        if (signatures.length > 0) {
+        require(signatures.length >= 7 || msg.sender == address(this), "At least 7 signatures required unless internal call");
+        if (signatures.length >= 7) {
             require(verifySignatures(keccak256(abi.encodePacked("SidechainDevWithdraw", recipient, talantonAmt, drachmaAmt, obolosAmt)), signatures, 7), "Invalid signatures");
         }
         require(talantonAmt <= sidechainDevVaultTalanton && drachmaAmt <= sidechainDevVaultDrachma && obolosAmt <= sidechainDevVaultObolos, "Insufficient funds");
@@ -704,8 +762,8 @@ contract HellenicPoliteia is Initializable, ReentrancyGuardUpgradeable, OwnableU
     }
 
     function withdrawFullChainDev(address recipient, uint256 talantonAmt, uint256 drachmaAmt, uint256 obolosAmt, bytes[] calldata signatures) public onlyStrategoi nonReentrant whenNotPaused {
-        require(signatures.length > 0 || msg.sender == address(this), "Signatures required unless internal call");
-        if (signatures.length > 0) {
+        require(signatures.length >= 7 || msg.sender == address(this), "At least 7 signatures required unless internal call");
+        if (signatures.length >= 7) {
             require(verifySignatures(keccak256(abi.encodePacked("FullChainDevWithdraw", recipient, talantonAmt, drachmaAmt, obolosAmt)), signatures, 7), "Invalid signatures");
         }
         require(talantonAmt <= fullChainDevVaultTalanton && drachmaAmt <= fullChainDevVaultDrachma && obolosAmt <= fullChainDevVaultObolos, "Insufficient funds");
@@ -720,7 +778,7 @@ contract HellenicPoliteia is Initializable, ReentrancyGuardUpgradeable, OwnableU
     }
 
     function withdrawCharity(address recipient, uint256 talantonAmt, uint256 drachmaAmt, uint256 obolosAmt, bytes[] calldata signatures) external onlyStrategoi nonReentrant whenNotPaused {
-        require(signatures.length > 0, "Signatures required");
+        require(signatures.length >= 7, "At least 7 signatures required");
         require(verifySignatures(keccak256(abi.encodePacked("CharityWithdraw", recipient, talantonAmt, drachmaAmt, obolosAmt)), signatures, 7), "Invalid signatures");
         require(talantonAmt <= charityVaultTalanton && drachmaAmt <= charityVaultDrachma && obolosAmt <= charityVaultObolos, "Insufficient funds");
         require(recipient != address(0), "Invalid recipient");
@@ -734,7 +792,7 @@ contract HellenicPoliteia is Initializable, ReentrancyGuardUpgradeable, OwnableU
     }
 
     function withdrawEmergency(address recipient, uint256 talantonAmt, uint256 drachmaAmt, uint256 obolosAmt, bytes[] calldata signatures) external onlyArchon nonReentrant {
-        require(signatures.length > 0, "Signatures required");
+        require(signatures.length >= 3, "At least 3 signatures required");
         require(verifySignatures(keccak256(abi.encodePacked("EmergencyWithdraw", recipient, talantonAmt, drachmaAmt, obolosAmt)), signatures, 3), "Requires Archon + 2 Strategoi");
         require(talantonAmt <= emergencyVaultTalanton && drachmaAmt <= emergencyVaultDrachma && obolosAmt <= emergencyVaultObolos, "Insufficient funds");
         require(recipient != address(0), "Invalid recipient");
