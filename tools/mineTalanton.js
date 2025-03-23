@@ -1,31 +1,32 @@
 const { ethers } = require("ethers");
-require("dotenv").config(); // For environment variables
+require("dotenv").config();
 
-// Configuration
 const RPC_URL = "https://data-seed-prebsc-1-s1.binance.org:8545"; // BSC Testnet RPC
 const TALANTON_ADDRESS = "0x..."; // Replace with deployed Talanton address
-const PRIVATE_KEY = process.env.PRIVATE_KEY; // Store in .env file
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
+
 const TALANTON_ABI = [
   "function mine(uint256 nonce) external",
   "function stakedBalance(address user) external view returns (uint256)",
   "function stake(uint256 amount) external",
   "function balanceOf(address account) external view returns (uint256)",
-  "function approve(address spender, uint256 amount) external returns (bool)"
+  "function approve(address spender, uint256 amount) external returns (bool)",
+  "function currentDifficulty() external view returns (uint256)",
+  "function currentTarget() external view returns (uint256)",
+  "function currentRewardFull() external view returns (uint256)",
+  "function currentRewardMin() external view returns (uint256)"
 ];
 
-// Provider and Wallet
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 const talanton = new ethers.Contract(TALANTON_ADDRESS, TALANTON_ABI, wallet);
 
-// Mining Parameters (must match Talanton.sol)
-const MINING_DIFFICULTY = 1000;
-const TARGET = ethers.MaxUint256.div(MINING_DIFFICULTY);
 const STAKE_AMOUNT = ethers.parseEther("32000");
+const MIN_STAKE_FOR_MINING = ethers.parseEther("1000");
 
 async function checkStake() {
   const stakedBalance = await talanton.stakedBalance(wallet.address);
-  if (stakedBalance.lt(STAKE_AMOUNT)) {
+  if (stakedBalance.lt(MIN_STAKE_FOR_MINING)) {
     console.log("Insufficient stake. Staking 32,000 TAL...");
     const balance = await talanton.balanceOf(wallet.address);
     if (balance.lt(STAKE_AMOUNT)) {
@@ -43,20 +44,24 @@ async function checkStake() {
 
 async function mineTalanton() {
   try {
-    // Check staking requirement
     await checkStake();
 
-    // Get current block info
     const blockNumber = await provider.getBlockNumber();
-    const block = await provider.getBlock(blockNumber - 1); // Previous block
+    const block = await provider.getBlock(blockNumber - 1);
     const blockHash = block.hash;
     const stakedBalance = await talanton.stakedBalance(wallet.address);
+    const currentTarget = await talanton.currentTarget();
+    const currentDifficulty = await talanton.currentDifficulty();
+    const currentRewardFull = await talanton.currentRewardFull();
+    const currentRewardMin = await talanton.currentRewardMin();
 
     console.log("Mining for block:", blockNumber - 1);
     console.log("Block hash:", blockHash);
     console.log("Staked balance:", ethers.formatEther(stakedBalance));
+    console.log("Current difficulty:", currentDifficulty.toString());
+    console.log("Current target:", currentTarget.toString());
+    console.log("Current reward (full/min):", ethers.formatEther(currentRewardFull), "/", ethers.formatEther(currentRewardMin));
 
-    // Compute nonce off-chain
     let nonce = 0;
     let solution;
     while (true) {
@@ -66,7 +71,7 @@ async function mineTalanton() {
           [wallet.address, blockHash, nonce, stakedBalance]
         )
       );
-      if (ethers.toBigInt(solution) <= TARGET) {
+      if (ethers.toBigInt(solution) <= currentTarget) {
         console.log("Found valid nonce:", nonce);
         break;
       }
@@ -76,7 +81,6 @@ async function mineTalanton() {
       }
     }
 
-    // Submit mining transaction
     const tx = await talanton.mine(nonce, { gasLimit: 100000 });
     const receipt = await tx.wait();
     console.log("Mined successfully! Tx hash:", receipt.hash);
@@ -88,5 +92,4 @@ async function mineTalanton() {
   }
 }
 
-// Run the mining script
 mineTalanton();
